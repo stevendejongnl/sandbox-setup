@@ -7,7 +7,7 @@ Reproducible setup for the `sandbox` LXC container — a persistent, browser-acc
 A web terminal (ttyd + tmux) running in an isolated LXC container on Proxmox. You get a persistent shell in your browser with internet access but no local network access.
 
 - **URL**: https://sandbox.madebysteven.nl
-- **Auth**: HTTP basic auth (username: `steven`)
+- **Auth**: HTTP Basic Auth at the Zoraxy reverse proxy level (not in ttyd)
 - **Terminal**: xterm.js via ttyd, works on mobile (iOS Safari)
 - **Session**: tmux session named `main` — survives browser disconnects
 - **Restore**: `sudo restore-session` to wipe and re-bootstrap the environment

@@ -19,9 +19,11 @@ EOF"
 echo "==> [3/6] Configuring network isolation (iptables)"
 ssh "$PVE_HOST" "sudo su << 'EOF'
 pct exec $CTID -- bash << 'INNER'
-iptables -C OUTPUT -d 192.168.1.0/24 -j DROP 2>/dev/null || iptables -A OUTPUT -d 192.168.1.0/24 -j DROP
-iptables -C OUTPUT -d 10.0.0.0/8    -j DROP 2>/dev/null || iptables -A OUTPUT -d 10.0.0.0/8 -j DROP
-iptables -C OUTPUT -d 172.16.0.0/12 -j DROP 2>/dev/null || iptables -A OUTPUT -d 172.16.0.0/12 -j DROP
+iptables -F OUTPUT
+  iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  iptables -A OUTPUT -m conntrack --ctstate NEW -d 192.168.1.0/24 -j DROP
+iptables -A OUTPUT -m conntrack --ctstate NEW -d 10.0.0.0/8 -j DROP
+iptables -A OUTPUT -m conntrack --ctstate NEW -d 172.16.0.0/12 -j DROP
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
 systemctl enable netfilter-persistent 2>/dev/null || true
@@ -34,21 +36,15 @@ ssh "$PVE_HOST" "sudo su << 'EOF'
 pct exec $CTID -- bash -c \"[ -x /usr/local/bin/ttyd ] && echo ttyd already installed || (curl -fsSL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd && echo ttyd installed)\"
 EOF"
 
-echo "==> [5/6] Configuring ttyd credentials and service"
-read -rp "ttyd username [steven]: " TTYD_USER
-TTYD_USER="${TTYD_USER:-steven}"
-read -rsp "ttyd password: " TTYD_PASS
-echo
-
-CRED_B64=$(printf 'TTYD_CREDENTIAL=%s:%s' "$TTYD_USER" "$TTYD_PASS" | base64 -w0)
+echo "==> [5/6] Configuring ttyd service"
+# Note: ttyd runs without --credential. Auth is handled by Zoraxy (HTTP Basic Auth on the proxy rule).
+# Add Basic Auth in Zoraxy admin UI -> HTTP Proxy -> sandbox rule -> Access Rules.
 
 WRAPPER_B64=$(base64 -w0 << 'SCRIPT'
 #!/bin/bash
-CRED=$(grep TTYD_CREDENTIAL /etc/ttyd/credentials | cut -d= -f2-)
-/usr/local/bin/ttyd \
+exec /usr/local/bin/ttyd \
   --writable \
   --port 7681 \
-  --credential "$CRED" \
   --client-option fontFamily=monospace \
   --client-option fontSize=15 \
   tmux new-session -A -s main
@@ -90,10 +86,6 @@ RESTORE
 
 ssh "$PVE_HOST" "sudo su << EOF
 pct exec $CTID -- bash << 'INNER'
-mkdir -p /etc/ttyd
-echo $CRED_B64 | base64 -d > /etc/ttyd/credentials
-chown root:terminal /etc/ttyd/credentials
-chmod 640 /etc/ttyd/credentials
 echo $WRAPPER_B64 | base64 -d > /usr/local/bin/ttyd-start
 chmod 755 /usr/local/bin/ttyd-start
 echo $SVC_B64 | base64 -d > /etc/systemd/system/ttyd.service
