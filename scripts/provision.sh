@@ -11,8 +11,8 @@
 # shellcheck disable=SC2029  # $CTID intentionally expands client-side in ssh commands
 set -euo pipefail
 
-CTID="${CTID:-133}"
-PVE_HOST="${PVE_HOST:-pve2}"
+CTID="${CTID:?Set CTID env var (e.g. CTID=200 PVE_HOST=myhost ./scripts/provision.sh)}"
+PVE_HOST="${PVE_HOST:?Set PVE_HOST env var}"
 
 echo "==> [1/4] Installing system packages"
 ssh "$PVE_HOST" "sudo su << 'EOF'
@@ -120,6 +120,6 @@ EOF"
 
 echo ""
 echo "Done! Container $CTID is ready."
-echo "  Add Zoraxy rule: sandbox.madebysteven.nl -> <pve2-ip>:7681  (DNAT forwards to 10.0.133.2:7681)"
-echo "  Open https://sandbox.madebysteven.nl"
-echo "  Inside tmux: git clone <your-setup-repo> ~/setup && ~/setup/bootstrap.sh"
+echo "  Point your reverse proxy at <proxmox-host-ip>:7681 (DNAT forwards to the container)"
+echo "  Open https://sandbox.example.com (or whatever domain you configured)"
+echo "  Inside tmux: git clone https://github.com/stevendejongnl/sandbox-setup.git ~/setup && ~/setup/bootstrap.sh"

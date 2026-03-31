@@ -46,4 +46,4 @@ done
 echo ""
 echo "Bootstrap complete."
 echo "  tmux is already running as session 'main' — you're in it."
-echo "  Run 'sudo restore-session' to wipe tools and re-run this script."
+echo "  Run 'restore-session' to reset packages and re-run this script."

@@ -1,6 +1,6 @@
 # repos.txt — Git repos to clone into ~/
 # One HTTPS URL per line. Lines starting with # are ignored.
-# LAN is blocked in the sandbox — use HTTPS, not SSH.
+# Use HTTPS URLs — SSH may not work depending on your network isolation setup.
 #
 # Examples:
 # https://github.com/you/your-project.git
