@@ -1,0 +1,12 @@
+# gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "sandbox-setup"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "base64-encoded shell scripts in provision.sh"
+paths = ['''scripts/provision\.sh''']
+regexes = ['''[A-Za-z0-9+/]{40,}={0,2}''']

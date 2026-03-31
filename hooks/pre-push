@@ -1,0 +1,53 @@
+#!/bin/bash
+# pre-push: runs on all shell files before pushing.
+set -euo pipefail
+
+PASS=true
+
+ALL_SCRIPTS=$(find . -not -path './.git/*' \( \
+  -name "*.sh" -o \
+  -name ".bashrc" -o \
+  -name ".bash_profile" \
+\) 2>/dev/null)
+
+# Bash syntax check
+echo "==> bash -n syntax check (all files)"
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  if ! bash -n "$f" 2>&1; then
+    echo "  FAIL: $f"
+    PASS=false
+  fi
+done <<< "$ALL_SCRIPTS"
+
+# ShellCheck
+echo "==> shellcheck (all files)"
+if command -v shellcheck &>/dev/null; then
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if ! shellcheck "$f"; then
+      PASS=false
+    fi
+  done <<< "$ALL_SCRIPTS"
+else
+  echo "  shellcheck not installed — skipping"
+fi
+
+# Gitleaks (full history scan)
+echo "==> gitleaks (full scan)"
+if command -v gitleaks &>/dev/null; then
+  if ! gitleaks detect --redact; then
+    echo "  FAIL: gitleaks found secrets"
+    PASS=false
+  fi
+else
+  echo "  gitleaks not installed — skipping"
+fi
+
+if [ "$PASS" = false ]; then
+  echo ""
+  echo "pre-push: checks failed. Fix the issues above before pushing."
+  exit 1
+fi
+
+echo "pre-push: all checks passed."

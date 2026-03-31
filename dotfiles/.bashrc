@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # .bashrc — sandbox terminal user
 # Sourced by interactive bash shells
 
@@ -28,7 +29,7 @@ if [ -n "$TMUX" ] && [ ! -f /tmp/.sandbox_welcomed ]; then
   echo "  │    ~/setup/bootstrap.sh                            │"
   echo "  │                                                    │"
   echo "  │  Rebuild environment (keeps files):                │"
-  echo "  │    sudo restore-session                            │"
+  echo "  │    restore-session                                 │"
   echo "  ├────────────────────────────────────────────────────┤"
   echo "  │  tmux: C-a |  split right   C-a -  split down     │"
   echo "  │        C-a d  detach         C-a [  scroll mode    │"

@@ -1,43 +1,31 @@
 #!/bin/bash
 # provision.sh — Run from workstation to fully set up the sandbox LXC container.
-# Requires: ssh access to pve2, container already created and running.
+#
+# Prerequisites:
+#   1. LXC container created and running (see README.md step 1)
+#   2. vmbr1 NAT bridge configured on pve2 (see README.md step 2)
+#   3. SSH access to pve2
+#
+# The container runs as root, on an isolated NAT bridge (vmbr1, 10.0.133.0/24).
+# Network isolation is enforced at the host — no iptables rules needed inside.
+# shellcheck disable=SC2029  # $CTID intentionally expands client-side in ssh commands
 set -euo pipefail
 
 CTID="${CTID:-133}"
 PVE_HOST="${PVE_HOST:-pve2}"
 
-echo "==> [1/6] Installing system packages"
+echo "==> [1/4] Installing system packages"
 ssh "$PVE_HOST" "sudo su << 'EOF'
 pct exec $CTID -- bash -c \"apt-get update -qq && apt-get install -y tmux curl wget git sudo iptables iptables-persistent build-essential python3 ca-certificates 2>&1 | tail -3\"
 EOF"
 
-echo "==> [2/6] Creating terminal user"
-ssh "$PVE_HOST" "sudo su << 'EOF'
-pct exec $CTID -- bash -c \"id terminal &>/dev/null || useradd -m -s /bin/bash terminal && echo terminal user ready\"
-EOF"
-
-echo "==> [3/6] Configuring network isolation (iptables)"
-ssh "$PVE_HOST" "sudo su << 'EOF'
-pct exec $CTID -- bash << 'INNER'
-iptables -F OUTPUT
-  iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  iptables -A OUTPUT -m conntrack --ctstate NEW -d 192.168.1.0/24 -j DROP
-iptables -A OUTPUT -m conntrack --ctstate NEW -d 10.0.0.0/8 -j DROP
-iptables -A OUTPUT -m conntrack --ctstate NEW -d 172.16.0.0/12 -j DROP
-mkdir -p /etc/iptables
-iptables-save > /etc/iptables/rules.v4
-systemctl enable netfilter-persistent 2>/dev/null || true
-echo iptables rules saved
-INNER
-EOF"
-
-echo "==> [4/6] Installing ttyd"
+echo "==> [2/4] Installing ttyd"
 ssh "$PVE_HOST" "sudo su << 'EOF'
 pct exec $CTID -- bash -c \"[ -x /usr/local/bin/ttyd ] && echo ttyd already installed || (curl -fsSL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd && echo ttyd installed)\"
 EOF"
 
-echo "==> [5/6] Configuring ttyd service"
-# Note: ttyd runs without --credential. Auth is handled by Zoraxy (HTTP Basic Auth on the proxy rule).
+echo "==> [3/4] Configuring ttyd service"
+# ttyd runs without --credential. Auth is handled by Zoraxy (HTTP Basic Auth on the proxy rule).
 # Add Basic Auth in Zoraxy admin UI -> HTTP Proxy -> sandbox rule -> Access Rules.
 
 WRAPPER_B64=$(base64 -w0 << 'SCRIPT'
@@ -47,7 +35,38 @@ exec /usr/local/bin/ttyd \
   --port 7681 \
   --client-option fontFamily=monospace \
   --client-option fontSize=15 \
-  tmux new-session -A -s main
+  /usr/local/bin/sandbox-session
+SCRIPT
+)
+
+SESSION_B64=$(base64 -w0 << 'SCRIPT'
+#!/bin/bash
+# sandbox-session: runs tmux and cleans up when the session actually ends.
+tmux new-session -A -s main
+
+# If session still exists, this was a detach or browser disconnect — do nothing.
+# ttyd will reconnect to the same session.
+tmux has-session -t main 2>/dev/null && exit 0
+
+# Session is gone (user typed exit / killed the shell).
+# Reset the environment so the next connection starts clean.
+
+BASELINE=/etc/sandbox-baseline-packages
+if [ -f "$BASELINE" ]; then
+  TO_REMOVE=$(comm -23 \
+    <(dpkg --get-selections | grep -v deinstall | awk '{print $1}' | sort) \
+    <(sort "$BASELINE"))
+  if [ -n "$TO_REMOVE" ]; then
+    apt-get purge -y $TO_REMOVE 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+  fi
+fi
+
+if [ -f /root/setup/bootstrap.sh ]; then
+  bash /root/setup/bootstrap.sh
+fi
+
+rm -f /tmp/.sandbox_welcomed
 SCRIPT
 )
 
@@ -58,7 +77,6 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/ttyd-start
-User=terminal
 Restart=always
 RestartSec=3
 
@@ -69,18 +87,11 @@ SVC
 
 RESTORE_B64=$(base64 -w0 << 'RESTORE'
 #!/bin/bash
-# restore-session: kills tmux session and re-runs bootstrap.
-set -e
-echo "==> Stopping tmux session..."
+# restore-session: kills the tmux session.
+# sandbox-session detects the session is gone and handles cleanup + bootstrap automatically.
+echo "==> Ending session..."
 tmux kill-session -t main 2>/dev/null && echo "Session killed." || echo "No active session."
-echo "==> Running bootstrap..."
-if [ -f /home/terminal/setup/bootstrap.sh ]; then
-  sudo -u terminal bash /home/terminal/setup/bootstrap.sh
-else
-  echo "No bootstrap.sh found at ~/setup/bootstrap.sh"
-  echo "Run: git clone <your-setup-repo> /home/terminal/setup"
-fi
-echo "==> Done. Reconnect in your browser."
+echo "==> Environment will reset and reconnect in a moment."
 RESTORE
 )
 
@@ -88,17 +99,20 @@ ssh "$PVE_HOST" "sudo su << EOF
 pct exec $CTID -- bash << 'INNER'
 echo $WRAPPER_B64 | base64 -d > /usr/local/bin/ttyd-start
 chmod 755 /usr/local/bin/ttyd-start
+echo $SESSION_B64 | base64 -d > /usr/local/bin/sandbox-session
+chmod 755 /usr/local/bin/sandbox-session
 echo $SVC_B64 | base64 -d > /etc/systemd/system/ttyd.service
 echo $RESTORE_B64 | base64 -d > /usr/local/bin/restore-session
 chmod 755 /usr/local/bin/restore-session
-echo 'terminal ALL=(root) NOPASSWD: /usr/local/bin/restore-session' > /etc/sudoers.d/restore
-chmod 440 /etc/sudoers.d/restore
+rm -f /etc/sudoers.d/terminal /etc/sudoers.d/restore
+dpkg --get-selections | grep -v deinstall | awk '{print $1}' > /etc/sandbox-baseline-packages
+echo baseline packages saved
 systemctl daemon-reload
 systemctl enable --now ttyd
 INNER
 EOF"
 
-echo "==> [6/6] Verifying"
+echo "==> [4/4] Verifying"
 sleep 2
 ssh "$PVE_HOST" "sudo su << 'EOF'
 pct exec $CTID -- bash -c \"curl -s -o /dev/null -w 'ttyd HTTP status: %{http_code}\n' http://localhost:7681\"
@@ -106,6 +120,6 @@ EOF"
 
 echo ""
 echo "Done! Container $CTID is ready."
-echo "  Add Zoraxy rule: sandbox.madebysteven.nl -> 192.168.1.55:7681"
+echo "  Add Zoraxy rule: sandbox.madebysteven.nl -> <pve2-ip>:7681  (DNAT forwards to 10.0.133.2:7681)"
 echo "  Open https://sandbox.madebysteven.nl"
 echo "  Inside tmux: git clone <your-setup-repo> ~/setup && ~/setup/bootstrap.sh"

@@ -1,0 +1,58 @@
+#!/bin/bash
+# pre-commit: runs on staged files before each commit.
+set -euo pipefail
+
+PASS=true
+
+# Collect staged shell files
+STAGED_SH=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(\.sh$|/provision\.sh|/bootstrap\.sh|/sandbox-session|/restore-session|/ttyd-start|/install-hooks\.sh)' || true)
+STAGED_DOTFILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E 'dotfiles/\.(bashrc|bash_profile|tmux\.conf)$' || true)
+
+ALL_SCRIPTS="$STAGED_SH $STAGED_DOTFILES"
+
+if [ -z "$(echo "$ALL_SCRIPTS" | tr -d '[:space:]')" ]; then
+  echo "pre-commit: no shell files staged, skipping."
+  exit 0
+fi
+
+# Bash syntax check
+echo "==> bash -n syntax check"
+for f in $ALL_SCRIPTS; do
+  [ -f "$f" ] || continue
+  if ! bash -n "$f" 2>&1; then
+    echo "  FAIL: $f"
+    PASS=false
+  fi
+done
+
+# ShellCheck
+echo "==> shellcheck"
+if command -v shellcheck &>/dev/null; then
+  for f in $ALL_SCRIPTS; do
+    [ -f "$f" ] || continue
+    if ! shellcheck "$f"; then
+      PASS=false
+    fi
+  done
+else
+  echo "  shellcheck not installed — skipping"
+fi
+
+# Gitleaks (staged only)
+echo "==> gitleaks (staged)"
+if command -v gitleaks &>/dev/null; then
+  if ! gitleaks protect --staged --redact; then
+    echo "  FAIL: gitleaks found secrets in staged files"
+    PASS=false
+  fi
+else
+  echo "  gitleaks not installed — skipping"
+fi
+
+if [ "$PASS" = false ]; then
+  echo ""
+  echo "pre-commit: checks failed. Fix the issues above before committing."
+  exit 1
+fi
+
+echo "pre-commit: all checks passed."
