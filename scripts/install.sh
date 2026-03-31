@@ -272,23 +272,37 @@ early_script = r"""<script>
       bar.appendChild(b);
     });
 
-    /* Prevent toolbar taps from stealing focus from xterm (which closes the
-       keyboard). mousedown preventDefault stops the focus transfer; the click
-       event still fires so buttons work normally. */
-    bar.addEventListener('mousedown', function (e) { e.preventDefault(); });
-    bar.addEventListener('touchstart', function (e) {
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
-        e.preventDefault();
+    /* Button action dispatcher (shared by touch and mouse paths) */
+    function handleBtn(el) {
+      if (el.id === 'sb-kbd-btn') {
+        var ta = document.querySelector('.xterm-helper-textarea');
+        if (!ta) { return; }
+        if (document.activeElement === ta) { ta.blur(); } else { ta.focus(); }
+      } else if (el.dataset.seq !== undefined) {
+        window.__sbSend(parseSeq(el.dataset.seq));
+      }
+    }
+
+    /* Touch path: act on touchend and prevent the synthesized mousedown that
+       would steal focus from xterm (closing the keyboard).
+       touchstart is NOT prevented so horizontal swipe-to-scroll still works. */
+    bar.addEventListener('touchend', function (e) {
+      var el = e.target;
+      while (el && el !== bar) {
+        if (el.tagName === 'BUTTON') {
+          e.preventDefault(); /* blocks synthesized mousedown/focus transfer */
+          handleBtn(el);
+          return;
+        }
+        el = el.parentElement;
       }
     }, { passive: false });
 
+    /* Desktop mouse path */
     bar.addEventListener('click', function (e) {
       var el = e.target;
       while (el && el !== bar) {
-        if (el.tagName === 'BUTTON' && el.dataset.seq !== undefined) {
-          window.__sbSend(parseSeq(el.dataset.seq));
-          return;
-        }
+        if (el.tagName === 'BUTTON') { handleBtn(el); return; }
         el = el.parentElement;
       }
     });
