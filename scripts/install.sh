@@ -155,7 +155,51 @@ early_script = r"""<script>
   ].join('');
   document.head.appendChild(style);
 
-  /* 3. Build toolbar DOM after page loads (avoids Preact reconciliation issues) */
+  /* 3. Layout adjustment — keeps terminal + toolbar within the visual viewport.
+        On iOS, opening the keyboard shrinks visualViewport.height but NOT
+        window.innerHeight. position:fixed elements stay anchored to the full
+        document, so the toolbar disappears behind the keyboard. Fix: translate
+        the toolbar up by the keyboard height and shrink the terminal to match. */
+  var _syntheticResize = false;
+
+  function adjustLayout() {
+    var bar = document.getElementById('sandbox-toolbar');
+    var tc  = document.getElementById('terminal-container');
+    if (!bar || !tc) { return; }
+
+    var vv = window.visualViewport;
+    var visH, keyboardH;
+    if (vv) {
+      visH      = vv.height;
+      keyboardH = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+      bar.style.transform = keyboardH > 0 ? 'translateY(-' + keyboardH + 'px)' : '';
+    } else {
+      visH      = window.innerHeight;
+      keyboardH = 0;
+      bar.style.transform = '';
+    }
+
+    tc.style.height = (visH - bar.offsetHeight) + 'px';
+
+    /* Trigger xterm's fit addon. Guard against recursive calls because
+       dispatching 'resize' on window may fire our own listener again. */
+    if (!_syntheticResize) {
+      _syntheticResize = true;
+      window.dispatchEvent(new Event('resize'));
+      _syntheticResize = false;
+    }
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', adjustLayout);
+    window.visualViewport.addEventListener('scroll', adjustLayout);
+  }
+  /* Standard resize for Android Chrome (window.innerHeight changes there) */
+  window.addEventListener('resize', function () {
+    if (!_syntheticResize) { adjustLayout(); }
+  });
+
+  /* 4. Build toolbar DOM after page loads (avoids Preact reconciliation issues) */
   function parseSeq(s) {
     return s.replace(/\\x([0-9a-fA-F]{2})/g, function (_, h) {
       return String.fromCharCode(parseInt(h, 16));
@@ -174,7 +218,10 @@ early_script = r"""<script>
   ];
 
   function buildToolbar() {
-    if (document.getElementById('sandbox-toolbar')) { return; }
+    if (document.getElementById('sandbox-toolbar')) {
+      adjustLayout();
+      return;
+    }
     var bar = document.createElement('div');
     bar.id = 'sandbox-toolbar';
     BUTTONS.forEach(function (btn) {
@@ -201,6 +248,8 @@ early_script = r"""<script>
       }
     });
     document.body.appendChild(bar);
+    /* Initial layout: shrink terminal to leave room for toolbar */
+    requestAnimationFrame(adjustLayout);
   }
 
   window.addEventListener('load', buildToolbar);
