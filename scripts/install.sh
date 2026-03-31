@@ -160,6 +160,8 @@ early_script = r"""<script>
         window.innerHeight. position:fixed elements stay anchored to the full
         document, so the toolbar disappears behind the keyboard. Fix: translate
         the toolbar up by the keyboard height and shrink the terminal to match. */
+  /* Baseline visual-viewport height captured before any keyboard opens */
+  var _noKbdH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   var _syntheticResize = false;
 
   function adjustLayout() {
@@ -180,6 +182,14 @@ early_script = r"""<script>
     }
 
     tc.style.height = (visH - bar.offsetHeight) + 'px';
+
+    /* Update keyboard-toggle button to reflect current keyboard state */
+    var kbdBtn = document.getElementById('sb-kbd-btn');
+    if (kbdBtn) {
+      var kbdOpen = visH < _noKbdH - 100;
+      kbdBtn.style.background = kbdOpen ? '#1a3a1a' : '#2d2d2d';
+      kbdBtn.textContent = kbdOpen ? '\u2328\u2715' : '\u2328';
+    }
 
     /* Trigger xterm's fit addon. Guard against recursive calls because
        dispatching 'resize' on window may fire our own listener again. */
@@ -224,6 +234,30 @@ early_script = r"""<script>
     }
     var bar = document.createElement('div');
     bar.id = 'sandbox-toolbar';
+
+    /* Keyboard toggle button — first in the bar */
+    var kbdBtn = document.createElement('button');
+    kbdBtn.type = 'button';
+    kbdBtn.id = 'sb-kbd-btn';
+    kbdBtn.title = 'Toggle keyboard';
+    kbdBtn.textContent = '\u2328'; /* ⌨ */
+    kbdBtn.addEventListener('click', function () {
+      var ta = document.querySelector('.xterm-helper-textarea');
+      if (!ta) { return; }
+      if (document.activeElement === ta) {
+        ta.blur();
+      } else {
+        ta.focus();
+      }
+    });
+    bar.appendChild(kbdBtn);
+
+    /* Separator */
+    var sep0 = document.createElement('div');
+    sep0.className = 'sb-sep';
+    bar.appendChild(sep0);
+
+    /* Key-sequence buttons */
     BUTTONS.forEach(function (btn) {
       if (!btn) {
         var sep = document.createElement('div');
@@ -237,6 +271,17 @@ early_script = r"""<script>
       b.textContent = btn[1];
       bar.appendChild(b);
     });
+
+    /* Prevent toolbar taps from stealing focus from xterm (which closes the
+       keyboard). mousedown preventDefault stops the focus transfer; the click
+       event still fires so buttons work normally. */
+    bar.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    bar.addEventListener('touchstart', function (e) {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
     bar.addEventListener('click', function (e) {
       var el = e.target;
       while (el && el !== bar) {
@@ -247,6 +292,7 @@ early_script = r"""<script>
         el = el.parentElement;
       }
     });
+
     document.body.appendChild(bar);
     /* Initial layout: shrink terminal to leave room for toolbar */
     requestAnimationFrame(adjustLayout);
