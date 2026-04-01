@@ -20,7 +20,7 @@ set -euo pipefail
 # ── 1. System packages ────────────────────────────────────────────────────────
 msg_info "Installing system packages"
 $STD apt-get update
-$STD apt-get install -y tmux curl wget git build-essential python3 ca-certificates
+$STD apt-get install -y tmux curl wget git build-essential python3 ca-certificates nginx
 msg_ok "Installed system packages"
 
 # ── 2. fakeid.so — makes process.getuid() return 1000 so Claude Code doesn't ──
@@ -66,7 +66,7 @@ cat > /usr/local/bin/ttyd-start << SCRIPT_EOF
 #!/bin/bash
 exec /usr/local/bin/ttyd \\
   --writable \\
-  --port $PORT \\
+  --port $((PORT + 1)) \\
   --index /usr/local/share/sandbox/index.html \\
   --client-option fontFamily=monospace \\
   --client-option fontSize=15 \\
@@ -343,6 +343,95 @@ SVC_EOF
 systemctl daemon-reload
 $STD systemctl enable --now ttyd
 msg_ok "Configured systemd service"
+
+# ── 6b. nginx reverse proxy ──────────────────────────────────────────────────
+msg_info "Configuring nginx reverse proxy"
+rm -f /etc/nginx/sites-enabled/default
+cat > /etc/nginx/sites-available/sandbox << NGINX_EOF
+server {
+    listen $PORT;
+
+    location / {
+        proxy_pass         http://127.0.0.1:$((PORT + 1));
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_read_timeout 7d;
+        proxy_buffering    off;
+    }
+
+    location = /dashboard {
+        return 302 /dashboard/;
+    }
+    location /dashboard/ {
+        proxy_pass         http://127.0.0.1:5000/;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_buffering    off;
+    }
+}
+NGINX_EOF
+ln -sf /etc/nginx/sites-available/sandbox /etc/nginx/sites-enabled/sandbox
+$STD nginx -t
+$STD systemctl enable --now nginx
+msg_ok "Configured nginx reverse proxy"
+
+# ── 6c. Docker and claude-dashboard ──────────────────────────────────────────
+msg_info "Installing Docker and claude-dashboard"
+if ! command -v docker &>/dev/null; then
+  $STD curl -fsSL https://get.docker.com | sh
+fi
+
+DASH_DIR="/opt/claude-dashboard"
+if [ -d "$DASH_DIR/.git" ]; then
+  $STD git -C "$DASH_DIR" pull --ff-only
+else
+  $STD git clone https://github.com/stevendejongnl/claude-dashboard.git "$DASH_DIR"
+fi
+
+if [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+  mkdir -p /root/.mitmproxy
+  docker run --rm \
+    -v /root/.mitmproxy:/home/mitmproxy/.mitmproxy \
+    mitmproxy/mitmproxy mitmdump --quiet &
+  MITM_INIT_PID=$!
+  sleep 5
+  kill "$MITM_INIT_PID" 2>/dev/null || true
+  wait "$MITM_INIT_PID" 2>/dev/null || true
+fi
+
+if [ -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+  cp /root/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+  $STD update-ca-certificates
+fi
+
+cat > /etc/systemd/system/claude-dashboard.service << 'SVC_EOF'
+[Unit]
+Description=Claude Dashboard (mitmproxy + FastAPI)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/claude-dashboard
+ExecStartPre=-/usr/bin/docker compose down
+ExecStart=/usr/bin/docker compose up --build
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+systemctl daemon-reload
+$STD systemctl enable --now claude-dashboard
+msg_ok "Installed Docker and claude-dashboard"
 
 # ── 7. Package baseline ───────────────────────────────────────────────────────
 msg_info "Saving package baseline"
