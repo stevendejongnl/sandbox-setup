@@ -352,6 +352,10 @@ msg_ok "Saved $(wc -l < /etc/sandbox-baseline-packages) packages to baseline"
 
 # ── 8. Clone sandbox-setup repo ───────────────────────────────────────────────
 msg_info "Cloning sandbox-setup"
-git clone https://github.com/stevendejongnl/sandbox-setup.git /root/setup
+if [ -d /root/setup/.git ]; then
+  git -C /root/setup pull --ff-only
+else
+  git clone https://github.com/stevendejongnl/sandbox-setup.git /root/setup
+fi
 bash /root/setup/bootstrap.sh
 msg_ok "Cloned and bootstrapped sandbox-setup"
