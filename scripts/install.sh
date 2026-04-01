@@ -7,11 +7,11 @@ set -euo pipefail
 
 PORT="${SANDBOX_PORT:-7681}"
 
-echo "==> [1/6] Installing system packages"
+echo "==> [1/8] Installing system packages"
 apt-get update -qq
-apt-get install -y tmux curl wget git build-essential python3 ca-certificates 2>&1 | tail -3
+apt-get install -y tmux curl wget git build-essential python3 ca-certificates nginx 2>&1 | tail -3
 
-echo "==> [2/6] Installing ttyd"
+echo "==> [2/8] Installing ttyd"
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)  TTYD_BIN="ttyd.x86_64" ;;
@@ -27,7 +27,7 @@ else
   echo "  ttyd already installed"
 fi
 
-echo "==> [3/6] Writing service scripts"
+echo "==> [3/8] Writing service scripts"
 
 # ttyd-start — launches ttyd with custom mobile UI
 mkdir -p /usr/local/share/sandbox
@@ -35,7 +35,7 @@ cat > /usr/local/bin/ttyd-start << SCRIPT_EOF
 #!/bin/bash
 exec /usr/local/bin/ttyd \\
   --writable \\
-  --port $PORT \\
+  --port $((PORT + 1)) \\
   --index /usr/local/share/sandbox/index.html \\
   --client-option fontFamily=monospace \\
   --client-option fontSize=15 \\
@@ -81,7 +81,7 @@ echo "==> Environment will reset and reconnect in a moment."
 SCRIPT_EOF
 chmod 755 /usr/local/bin/restore-session
 
-echo "==> [4/6] Generating mobile UI"
+echo "==> [4/8] Generating mobile UI"
 # Start ttyd briefly on a temp port to fetch its built-in HTML, then patch it.
 # Note: HTML-injected <div> elements are dropped by Preact's reconciliation pass
 # (Preact owns document.body). The toolbar must be created via JS after page load.
@@ -330,7 +330,7 @@ else
   echo "  Re-run install.sh or copy index.html manually to /usr/local/share/sandbox/"
 fi
 
-echo "==> [5/6] Configuring systemd service"
+echo "==> [5/8] Configuring ttyd systemd service"
 cat > /etc/systemd/system/ttyd.service << 'SVC_EOF'
 [Unit]
 Description=ttyd web terminal
@@ -348,12 +348,103 @@ SVC_EOF
 systemctl daemon-reload
 systemctl enable --now ttyd
 
-echo "==> [6/6] Saving baseline package list"
+echo "==> [6/8] Configuring nginx reverse proxy"
+# nginx was installed in step 1; disable the default site and write ours.
+rm -f /etc/nginx/sites-enabled/default
+cat > /etc/nginx/sites-available/sandbox << NGINX_EOF
+server {
+    listen $PORT;
+
+    # ttyd WebSocket terminal (internal port $((PORT + 1)))
+    location / {
+        proxy_pass         http://127.0.0.1:$((PORT + 1));
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_read_timeout 7d;
+        proxy_buffering    off;
+    }
+
+    # Claude Code transparency dashboard
+    location = /dashboard {
+        return 302 /dashboard/;
+    }
+    location /dashboard/ {
+        proxy_pass         http://127.0.0.1:5000/;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade \$http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_buffering    off;
+    }
+}
+NGINX_EOF
+ln -sf /etc/nginx/sites-available/sandbox /etc/nginx/sites-enabled/sandbox
+nginx -t
+systemctl enable --now nginx
+
+echo "==> [7/8] Installing Docker and claude-dashboard"
+if ! command -v docker &>/dev/null; then
+  curl -fsSL https://get.docker.com | sh
+fi
+
+DASH_DIR="/opt/claude-dashboard"
+if [ -d "$DASH_DIR/.git" ]; then
+  git -C "$DASH_DIR" pull --ff-only 2>/dev/null || true
+else
+  git clone https://github.com/stevendejongnl/claude-dashboard.git "$DASH_DIR"
+fi
+
+# Generate mitmproxy CA cert on first run so Claude Code TLS works through the proxy
+if [ ! -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+  mkdir -p /root/.mitmproxy
+  docker run --rm \
+    -v /root/.mitmproxy:/home/mitmproxy/.mitmproxy \
+    mitmproxy/mitmproxy mitmdump --quiet &
+  MITM_INIT_PID=$!
+  sleep 5
+  kill "$MITM_INIT_PID" 2>/dev/null || true
+  wait "$MITM_INIT_PID" 2>/dev/null || true
+fi
+
+if [ -f /root/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+  cp /root/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+  update-ca-certificates
+fi
+
+cat > /etc/systemd/system/claude-dashboard.service << 'SVC_EOF'
+[Unit]
+Description=Claude Dashboard (mitmproxy + FastAPI)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/claude-dashboard
+ExecStartPre=-/usr/bin/docker compose down
+ExecStart=/usr/bin/docker compose up --build
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+systemctl daemon-reload
+systemctl enable --now claude-dashboard
+
+echo "==> [8/8] Saving baseline package list"
 dpkg --get-selections | grep -v deinstall | awk '{print $1}' \
   > /etc/sandbox-baseline-packages
 echo "  $(wc -l < /etc/sandbox-baseline-packages) packages in baseline"
 
 echo ""
-echo "Done! ttyd is running on port $PORT."
-echo "  Point a reverse proxy at this machine:$PORT"
+echo "Done! nginx is running on port $PORT."
+echo "  Terminal:   http://this-machine:$PORT/"
+echo "  Dashboard:  http://this-machine:$PORT/dashboard"
+echo "  Point a reverse proxy at this machine:$PORT — Zoraxy config unchanged."
 echo "  Inside tmux: git clone https://github.com/stevendejongnl/sandbox-setup.git ~/setup && ~/setup/bootstrap.sh"

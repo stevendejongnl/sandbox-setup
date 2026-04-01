@@ -30,6 +30,12 @@ PS1='\[\033[01;31m\]${SANDBOX_USER}\[\033[00m\]@\[\033[01;34m\]\h\[\033[00m\]:\[
 # uv / python
 export UV_LINK_MODE=copy
 
+# Route HTTPS through mitmproxy so claude-dashboard captures API calls.
+# The mitmproxy CA cert is trusted system-wide (installed by install.sh).
+export HTTPS_PROXY=http://localhost:8082
+export HTTP_PROXY=http://localhost:8082
+export NO_PROXY=localhost,127.0.0.1,::1
+
 # Help text shown once per tmux session (not on every new pane)
 if [ -n "$TMUX" ] && [ ! -f /tmp/.sandbox_welcomed ]; then
   touch /tmp/.sandbox_welcomed
