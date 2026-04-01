@@ -1,7 +1,7 @@
 # repos.txt — Git repos to clone into ~/
 # One HTTPS URL per line. Lines starting with # are ignored.
 # Use HTTPS URLs — SSH may not work depending on your network isolation setup.
-#
-# Examples:
-# https://github.com/you/your-project.git
-# https://github.com/you/dotfiles.git
+
+# sandbox-setup itself — kept here so bootstrap.sh syncs it on every session reset,
+# picking up changes to dotfiles, install scripts, etc. automatically.
+https://github.com/stevendejongnl/sandbox-setup.git
