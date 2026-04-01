@@ -13,6 +13,10 @@ SANDBOX_USER="${_SANDBOX_NAMES[$RANDOM % ${#_SANDBOX_NAMES[@]}]}"
 export USER="$SANDBOX_USER"
 alias whoami='echo "$USER"'
 
+# Wrap claude with fakeid.so so process.getuid() returns 1000, not 0.
+# Without this, Claude Code warns about running as root on every launch.
+claude() { LD_PRELOAD=/usr/local/lib/fakeid.so command claude "$@"; }
+
 export PATH="$HOME/.local/bin:$PATH"
 
 # Handy aliases

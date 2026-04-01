@@ -23,7 +23,27 @@ $STD apt-get update
 $STD apt-get install -y tmux curl wget git build-essential python3 ca-certificates
 msg_ok "Installed system packages"
 
-# ── 2. ttyd ───────────────────────────────────────────────────────────────────
+# ── 2. fakeid.so — makes process.getuid() return 1000 so Claude Code doesn't ──
+# ──    warn about running as root (LD_PRELOAD'd via claude() in .bashrc)      ──
+msg_info "Building fakeid.so"
+cat > /tmp/fakeid.c << 'EOF'
+#include <sys/types.h>
+uid_t getuid(void)   { return 1000; }
+uid_t geteuid(void)  { return 1000; }
+gid_t getgid(void)   { return 1000; }
+gid_t getegid(void)  { return 1000; }
+EOF
+gcc -shared -fPIC -nostartfiles -o /usr/local/lib/fakeid.so /tmp/fakeid.c
+rm /tmp/fakeid.c
+# PATH-level whoami wrapper so subprocesses also return the sandbox alias
+cat > /usr/local/bin/whoami << 'EOF'
+#!/bin/bash
+echo "${USER:-root}"
+EOF
+chmod 755 /usr/local/bin/whoami
+msg_ok "Built fakeid.so"
+
+# ── 3. ttyd ──────────────────────────────────────────────────────────────────
 msg_info "Installing ttyd"
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -38,7 +58,7 @@ if [ ! -x /usr/local/bin/ttyd ]; then
 fi
 msg_ok "Installed ttyd"
 
-# ── 3. Service scripts ────────────────────────────────────────────────────────
+# ── 4. Service scripts ────────────────────────────────────────────────────────
 msg_info "Writing service scripts"
 mkdir -p /usr/local/share/sandbox
 
@@ -91,7 +111,7 @@ SCRIPT_EOF
 chmod 755 /usr/local/bin/restore-session
 msg_ok "Wrote service scripts"
 
-# ── 4. Mobile UI ──────────────────────────────────────────────────────────────
+# ── 5. Mobile UI ──────────────────────────────────────────────────────────────
 msg_info "Generating mobile UI"
 FETCH_PORT=$((PORT + 1))
 /usr/local/bin/ttyd --port "$FETCH_PORT" /bin/bash >/dev/null 2>&1 &
@@ -304,7 +324,7 @@ else
 fi
 msg_ok "Generated mobile UI"
 
-# ── 5. systemd service ────────────────────────────────────────────────────────
+# ── 6. systemd service ────────────────────────────────────────────────────────
 msg_info "Configuring systemd service"
 cat > /etc/systemd/system/ttyd.service << 'SVC_EOF'
 [Unit]
@@ -324,13 +344,13 @@ systemctl daemon-reload
 $STD systemctl enable --now ttyd
 msg_ok "Configured systemd service"
 
-# ── 6. Package baseline ───────────────────────────────────────────────────────
+# ── 7. Package baseline ───────────────────────────────────────────────────────
 msg_info "Saving package baseline"
 dpkg --get-selections | grep -v deinstall | awk '{print $1}' \
   > /etc/sandbox-baseline-packages
 msg_ok "Saved $(wc -l < /etc/sandbox-baseline-packages) packages to baseline"
 
-# ── 7. Clone sandbox-setup repo ───────────────────────────────────────────────
+# ── 8. Clone sandbox-setup repo ───────────────────────────────────────────────
 msg_info "Cloning sandbox-setup"
 git clone https://github.com/stevendejongnl/sandbox-setup.git /root/setup
 bash /root/setup/bootstrap.sh
