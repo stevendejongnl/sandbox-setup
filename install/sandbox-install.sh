@@ -384,7 +384,9 @@ msg_ok "Configured nginx reverse proxy"
 # ── 6c. Docker and claude-dashboard ──────────────────────────────────────────
 msg_info "Installing Docker and claude-dashboard"
 if ! command -v docker &>/dev/null; then
-  $STD curl -fsSL https://get.docker.com | sh
+  $STD curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  $STD sh /tmp/get-docker.sh
+  rm -f /tmp/get-docker.sh
 fi
 
 DASH_DIR="/opt/claude-dashboard"

@@ -13,9 +13,15 @@ SANDBOX_USER="${_SANDBOX_NAMES[$RANDOM % ${#_SANDBOX_NAMES[@]}]}"
 export USER="$SANDBOX_USER"
 alias whoami='echo "$USER"'
 
-# Wrap claude with fakeid.so so process.getuid() returns 1000, not 0.
-# Without this, Claude Code warns about running as root on every launch.
-claude() { LD_PRELOAD=/usr/local/lib/fakeid.so command claude "$@"; }
+# Wrap claude: fakeid.so masks root uid, HTTPS_PROXY routes traffic through
+# mitmproxy so claude-dashboard captures all Claude Code API calls.
+claude() {
+  LD_PRELOAD=/usr/local/lib/fakeid.so \
+  HTTPS_PROXY=http://localhost:8082 \
+  HTTP_PROXY=http://localhost:8082 \
+  NO_PROXY=localhost,127.0.0.1,::1 \
+  command claude "$@"
+}
 
 export PATH="$HOME/.local/bin:$PATH"
 
@@ -30,11 +36,6 @@ PS1='\[\033[01;31m\]${SANDBOX_USER}\[\033[00m\]@\[\033[01;34m\]\h\[\033[00m\]:\[
 # uv / python
 export UV_LINK_MODE=copy
 
-# Route HTTPS through mitmproxy so claude-dashboard captures API calls.
-# The mitmproxy CA cert is trusted system-wide (installed by install.sh).
-export HTTPS_PROXY=http://localhost:8082
-export HTTP_PROXY=http://localhost:8082
-export NO_PROXY=localhost,127.0.0.1,::1
 
 # Help text shown once per tmux session (not on every new pane)
 if [ -n "$TMUX" ] && [ ! -f /tmp/.sandbox_welcomed ]; then

@@ -388,7 +388,9 @@ systemctl enable --now nginx
 
 echo "==> [7/8] Installing Docker and claude-dashboard"
 if ! command -v docker &>/dev/null; then
-  curl -fsSL https://get.docker.com | sh
+  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+  sh /tmp/get-docker.sh
+  rm -f /tmp/get-docker.sh
 fi
 
 DASH_DIR="/opt/claude-dashboard"
