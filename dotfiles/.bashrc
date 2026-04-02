@@ -20,6 +20,7 @@ claude() {
   HTTPS_PROXY=http://localhost:8082 \
   HTTP_PROXY=http://localhost:8082 \
   NO_PROXY=localhost,127.0.0.1,::1 \
+  NODE_EXTRA_CA_CERTS=/root/.mitmproxy/mitmproxy-ca-cert.pem \
   command claude "$@"
 }
 
