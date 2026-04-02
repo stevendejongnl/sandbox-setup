@@ -46,7 +46,8 @@ chmod 755 /usr/local/bin/ttyd-start
 # sandbox-session — wraps tmux; resets environment when session actually ends
 cat > /usr/local/bin/sandbox-session << 'SCRIPT_EOF'
 #!/bin/bash
-tmux new-session -A -s main
+cd /root || true
+tmux new-session -A -s main -c /root
 
 # If session still exists, this was a detach or browser disconnect — do nothing.
 tmux has-session -t main 2>/dev/null && exit 0

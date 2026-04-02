@@ -10,6 +10,7 @@ _SANDBOX_NAMES=(
   "zero-day" "nan-boxer" "off-by-one" "dirty-pipe" "chaos-daemon"
 )
 SANDBOX_USER="${_SANDBOX_NAMES[$RANDOM % ${#_SANDBOX_NAMES[@]}]}"
+unset _SANDBOX_NAMES
 export USER="$SANDBOX_USER"
 alias whoami='echo "$USER"'
 
